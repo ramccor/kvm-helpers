@@ -1,0 +1,136 @@
+#!/usr/bin/perl
+
+sub usage {
+  printf("
+Monitor QEMU/KVM Virtual Machines over unix domain sockets or named pipes.
+
+usage: %s [OPTIONS] MONITOR [COMMAND]
+
+MONITOR    The qemu monitor file(s). 
+           unix sockets: the full path to the socket file.
+           named pipes: the path to the named pipes, excluding .in & .out
+COMMAND    Any qemu monitor command, \"info status\" by default.
+           See QEMU/Monitor documentation for full command list.
+
+Options:
+-h, --help	Print this message and exit.
+", (split /\//, $0)[-1]);
+  exit 1;
+}
+
+use IO::Socket::UNIX;
+use IO::Select;
+use File::Basename;
+use warnings;
+use strict;
+
+my ($monitor_path, @command) = @ARGV;
+my ($sock, $reader, $writer, $sel);
+my (@ready, $fh, $len, $line, $output);
+
+usage() if (!defined($monitor_path) ||
+            grep(/^-h$/i, @ARGV) ||
+            grep(/^--help$/i, @ARGV));
+
+# default command: info status
+my $command = @command ? join(' ', @command) : 'info status';
+
+
+my $lsof = '/usr/bin/lsof';
+
+if (!-d dirname($monitor_path)) {
+  print "No such virtual machine: The config dir $monitor_path does not exist\n";
+  exit 2;
+}
+
+my $qemu_monitor_file;
+if (-e $monitor_path) {
+  $qemu_monitor_file = $monitor_path;
+  $sock = IO::Socket::UNIX->new(Type=>SOCK_STREAM);
+} elsif (-e "$monitor_path.out") {
+  $qemu_monitor_file = "$monitor_path.out";
+} else {
+  print "No virtual machine monitor file found: $monitor_path\n";
+  exit 3;
+}
+
+# make sure a VM process is connected to the monitor before we start listening
+if (-e $lsof &&
+    system("$lsof -Fp -a -c qemu-system -- $qemu_monitor_file 2>&1 1> /dev/null")) {
+  print "No VM process appears to be using monitor at: $qemu_monitor_file.out\n";
+  exit 4;
+}
+
+if (defined($sock)) {
+  # connect to unix socket file
+  if (!$sock->connect(pack_sockaddr_un($monitor_path))) {
+    die("cannot connect to qemu monitor socket: $monitor_path");
+  }
+  $reader = $writer = $sock;
+} else {
+  # open named pipe monitor files
+  open($reader, '<',  "$monitor_path.out")
+    or die("cannot open qemu monitor pipe: $monitor_path.out");
+  open($writer, '>>', "$monitor_path.in")
+    or die("cannot open qemu monitor pipe: $monitor_path.in");
+}
+
+$sel = new IO::Select;
+$sel->add($reader);
+
+# pipe: flush anything left on the monitor from startup or previous commands
+# socket: wait up to 1 second, flush the preamble up to (qemu) prompt
+if ($sel->can_read(defined($sock) ? 1 : 0)) {
+  while (@ready = $sel->can_read(0)) {
+    foreach $fh (@ready) {
+      $len = sysread $fh, $line, 4096;
+      if(not defined $len){
+        printf("error from child: %s\n", $!);
+      } elsif ($len == 0) {
+        $sel->remove($fh);
+        next;
+      } 
+    }
+  }
+}
+
+# write the command to the in pipe or socket
+print $writer "$command\n";
+
+# close the in pipe
+close $writer unless defined($sock);
+
+# read the result from the out pipe or socket
+$output = '';
+while (@ready = $sel->can_read) {
+  foreach $fh (@ready) {
+    $len = sysread $fh, $line, 4096;
+    if(not defined $len){
+      printf("error from child: %s\n", $!);
+    } elsif ($len == 0){
+      $sel->remove($fh);
+      next;
+    } else { # we read data
+      $output .= $line;
+      if ($line =~ /\(qemu\)/){
+        $sel->remove($fh);
+        next;
+      }
+    }
+  }
+}
+
+# close the out pipe
+close $reader unless defined($sock);
+
+if ($output =~ /\(qemu\)/) {
+  # extract the output from between the command and the final (qemu) prompt
+  $output =~ s/$command.*?(?:^(.*).*?)?^\(qemu\).*/$1/msg;
+}
+
+# display the qemu monitor output
+print "$output";
+
+if (defined($sock)) {
+  $sock->close;
+}
