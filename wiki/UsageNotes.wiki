@@ -29,7 +29,7 @@ You can now run qemu-monitor. For both cases above, a basic run would look like 
 
 `qemu-monitor /path/to/kvmguest/kvmguest.monitor`
 
-If command is omitted, qemu-monitor runs "info status" on the virtual machine monitor.  It probably said:
+If command is omitted, qemu-monitor runs "info status" on the virtual machine monitor.  For the above example, you should get:
 
 `VM status: running`
 
