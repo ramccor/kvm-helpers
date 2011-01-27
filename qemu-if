@@ -1,0 +1,39 @@
+#!/bin/bash
+
+BRCTL="/usr/sbin/brctl"
+
+HELP="
+For proper use, create a symlink with the name of the form:
+qemu-if<up|down>-<bridge name>
+e.g. qemu-ifup-br0
+the script is then called with the interface name as the sole argument
+"
+
+
+if [ $# -ne "1" ]; then
+  echo "ERROR: an interface name is required"
+  echo -e "$HELP"
+  exit 1
+fi
+IFNAME=$1
+SELF=$(basename $0)
+UPDOWN=$(echo "$SELF" |awk -F- '{print $2}')
+BRIDGE=$(echo "$SELF" |awk -F- '{print $3}')
+if [ "$BRIDGE" = "" ] || [ "$UPDOWN" != "ifup" ] && [ "$UPDOWN" != "ifdown" ]; then
+  echo -e "$HELP"
+  exit 1
+else
+  $BRCTL showmacs $BRIDGE &>/dev/null
+  if [ $? -ne "0" ]; then
+    echo "ERROR: bridge $BRIDGE not found!"
+    echo -e "$HELP"
+    exit 1
+  fi
+fi
+if [ "$UPDOWN" = "ifup" ]; then
+  /sbin/ifconfig $IFNAME 0.0.0.0 promisc up
+  /usr/sbin/brctl addif $BRIDGE $IFNAME
+else #down
+  /usr/sbin/brctl delif $BRIDGE $IFNAME
+  /sbin/ifconfig $IFNAME 0.0.0.0 down
+fi
