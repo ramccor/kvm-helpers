@@ -1,0 +1,63 @@
+# Usage Notes #
+
+## qemu-monitor ##
+
+qemu-monitor provides access to qemu/kvm process monitoring.  The script does not run interactively, it runs a single monitor command given on the command line.
+
+qemu-monitor supports monitoring over unix domain socket files or named pipe files.
+
+### Usage ###
+
+`usage: qemu-monitor [OPTIONS] MONITOR [COMMAND]`
+
+When running QEMU/KVM, use options like these for unix domain sockets:
+
+`/usr/bin/kvm ... -chardev socket,id=monitor,path=/path/to/kvmguest/kvmguest.monitor,nowait,nodelay,server -monitor chardev:monitor`
+
+Or these for named pipes:
+
+`/usr/bin/kvm ... -chardev pipe,id=monitor,path=/path/to/kvmguest/kvmguest.monitor -monitor chardev:monitor`
+
+Note: for named pipes, you must create the files before running kvm:
+
+`mkfifo /path/to/kvmguest/kvmguest.monitor.{in,out}`
+
+You can now run qemu-monitor. For both cases above, a basic run would look like this:
+
+`qemu-monitor /path/to/kvmguest/kvmguest.monitor`
+
+If command is omitted, qemu-monitor runs "info status" on the virtual machine monitor.  For the above example, you should get:
+
+`VM status: running`
+
+To see a full list of monitor commands, use:
+
+`qemu-monitor /path/to/kvmguest/kvmguest.monitor help`
+
+And consult the QEMU/Monitor documentation.
+
+### Notes ###
+
+  * qemu-monitor will look for lsof at `/usr/bin/lsof`. If you have lsof in a different location, you may want to change that value in the code. If qemu-monitor finds lsof, it will make sure a qemu process is using the monitor files before connecting.
+
+  * I haven't broken it myself, but I assume that if you try to issue many monitor commands at the same time over named pipes (in parallel, many shells), it will fail.  If you want to do that, use socket files.
+
+## qemu-if ##
+
+qemu-if can be used instead of the qemu-ifup and qemu-ifdown scripts provided with kvm.  You would want to do this if you don't want your bridge device on the default route, or if you have several bridges configured and simply want to choose one.
+
+### Usage ###
+
+The script is designed to be used as a symlink, so if you placed the script in /usr/local/bin and want to use a bridge device br0, set it up like this:
+
+```
+cd /usr/local/bin
+ln -s qemu-if qemu-ifup-br0
+ln -s qemu-if qemu-ifdown-br0
+```
+
+The script uses components of its calling filename; 'up' and 'down' indicate ifup/down, and br0 indicates the bridge device.
+
+when the symlinks are in place, you're ready to use these options with kvm:
+
+`/usr/bin/kvm ... -net tap,vlan=0,script=/usr/local/bin/qemu-ifup-br0,downscript=/usr/local/bin/qemu-ifdown-br0`
